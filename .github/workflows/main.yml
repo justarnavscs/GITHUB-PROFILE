@@ -1,0 +1,88 @@
+name: Auto-Contribution Graph Generator
+
+on:
+  schedule:
+    # Runs automatically every day at 18:00 UTC (11:30 PM IST in India)
+    - cron: '0 18 * * *'
+  workflow_dispatch:
+    inputs:
+      run_backfill:
+        description: 'Run 3-Year Historical Backfill (Jan 2023 - Today)'
+        required: true
+        type: boolean
+        default: false
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Git
+        run: |
+          git config --global user.name "justarnavscs"
+          git config --global user.email "justarnav.scs@gmail.com"
+
+      - name: Generate Commits
+        run: |
+          BRANCH=$(git branch --show-current)
+          if [ -z "$BRANCH" ]; then BRANCH="main"; fi
+
+          # Check if the user checked the "Run Backfill" box during a manual run
+          if [ "${{ github.event.inputs.run_backfill }}" == "true" ]; then
+            CURRENT_DATE="2023-01-01"
+            END_DATE=$(date -I)
+            echo "Running historical backfill from 2023 to Today ($END_DATE)..."
+          else
+            # For the daily automatic cron job, just do today
+            CURRENT_DATE=$(date -I)
+            END_DATE=$(date -I)
+            echo "Running daily contribution for Today ($CURRENT_DATE)..."
+          fi
+
+          while [[ "$CURRENT_DATE" < "$END_DATE" ]] || [[ "$CURRENT_DATE" == "$END_DATE" ]]; do
+            
+            # 20% chance to take a day off (0 commits) to look like a real human schedule
+            DAY_OFF=$(( RANDOM % 100 ))
+            if [ $DAY_OFF -lt 20 ]; then
+              echo "Skipping $CURRENT_DATE (Taking a break!)"
+            else
+              # Randomly generate between 1 and 12 commits for a natural gradient
+              NUM_COMMITS=$(( (RANDOM % 12) + 1 ))
+              echo "Generating $NUM_COMMITS commits for $CURRENT_DATE"
+
+              # Set the time to noon to avoid timezone overlap issues
+              TARGET_DATE="${CURRENT_DATE}T12:00:00"
+              export GIT_AUTHOR_DATE="$TARGET_DATE"
+              export GIT_COMMITTER_DATE="$TARGET_DATE"
+
+              echo "Commit for $CURRENT_DATE" > daily_activity.txt
+              git add daily_activity.txt
+              git commit -m "Activity for $CURRENT_DATE"
+
+              TREE=$(git write-tree)
+              COMMIT=$(git rev-parse HEAD)
+
+              for (( i=1; i<NUM_COMMITS; i++ )); do
+                COMMIT=$(echo "Auto-commit $i for $CURRENT_DATE" | git commit-tree $TREE -p $COMMIT)
+              done
+
+              git update-ref refs/heads/$BRANCH $COMMIT
+            fi
+
+            # Advance to the next day
+            CURRENT_DATE=$(date -I -d "$CURRENT_DATE + 1 day")
+          done
+
+          unset GIT_AUTHOR_DATE
+          unset GIT_COMMITTER_DATE
+
+          echo "Pushing commits to GitHub..."
+          git push origin $BRANCH
+          
